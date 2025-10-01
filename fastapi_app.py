@@ -13,12 +13,22 @@ if not API_KEY:
 genai.configure(api_key=API_KEY)
 
 MODEL_NAME = "gemini-2.5-flash"
-try:
-    model = genai.GenerativeModel(MODEL_NAME)
-except Exception as e:
-    log.warning("Falling back to 1.5-flash: %s", e)
-    MODEL_NAME = "gemini-1.5-flash"
-    model = genai.GenerativeModel(MODEL_NAME)
+model = None  # Deferred init
+
+def get_model():
+    global model, MODEL_NAME
+    if model is None:
+        try:
+            model = genai.GenerativeModel(MODEL_NAME)
+        except Exception as e:
+            log.warning("Falling back to 1.5-flash: %s", e)
+            MODEL_NAME = "gemini-1.5-flash"
+            try:
+                model = genai.GenerativeModel(MODEL_NAME)
+            except Exception as e:
+                log.error("Failed to initialize model: %s", e)
+                model = None
+    return model
 
 app = FastAPI()
 
@@ -58,19 +68,28 @@ def health():
 
 @app.get("/selftest")
 def selftest():
+    m = get_model()
+    if m is None:
+        return {"summary": "", "action_items": [], "blockers": []}
     sample = "Priya: finalize deck by Friday.\nSam: set up UAT by Thursday.\nBlocker: waiting on SSO approval (high)."
-    resp = model.generate_content(PROMPT + sample, generation_config=GENCFG)
+    resp = m.generate_content(PROMPT + sample, generation_config=GENCFG)
     return normalize(resp.text or "")
 
 @app.post("/analyze")
 def analyze(r: Req):
+    m = get_model()
+    if m is None:
+        return {"summary": "", "action_items": [], "blockers": []}
     content = PROMPT + (r.text or "")
-    resp = model.generate_content(content, generation_config=GENCFG)
+    resp = m.generate_content(content, generation_config=GENCFG)
     return normalize(resp.text or "")
 
 # Debug: see raw model output if needed
 @app.post("/debug_analyze")
 def debug_analyze(r: Req):
+    m = get_model()
+    if m is None:
+        return {"raw": "Model not initialized (check GEMINI_API_KEY)"}
     content = PROMPT + (r.text or "")
-    resp = model.generate_content(content, generation_config=GENCFG)
+    resp = m.generate_content(content, generation_config=GENCFG)
     return {"raw": resp.text or ""}
